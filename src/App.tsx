@@ -53,7 +53,7 @@ const App = () => {
       );
       alert(response.data.message);
       setTransaction(null);
-      setSelectedSeat(null); // Reset selected seat after committing
+      setSelectedSeat(null);
     } catch (error) {
       console.error("Error committing transaction:", error);
     }
@@ -66,106 +66,119 @@ const App = () => {
       );
       alert(response.data.message);
       setTransaction(null);
-      setSelectedSeat(null); // Reset selected seat after aborting
+      setSelectedSeat(null);
     } catch (error) {
       console.error("Error aborting transaction:", error);
     }
   };
 
   return (
-    <div className="min-h-screen bg-gray-100 p-5">
-      <h1 className="text-3xl font-bold text-center mb-5">
-        Flight Booking System
-      </h1>
+    <div className="min-h-screen bg-gray-100 p-10">
+      <h1 className="text-4xl font-bold text-center mb-10">Flight Booking System</h1>
 
-      {/* Display Flights */}
-      <h2 className="text-2xl mb-3">Select a Flight</h2>
-      <ul className="bg-white shadow-md rounded-lg">
-        {flights.map((flight) => (
-          <li
-            key={flight.id}
-            onClick={() => setSelectedFlight(flight)}
-            className="p-4 border-b cursor-pointer hover:bg-gray-200"
-          >
-            {flight.flight_number} (Departure:{" "}
-            {new Date(flight.departure_time).toLocaleString()})
-          </li>
-        ))}
-      </ul>
+      {/* Flight Selection */}
+      <div className="flex justify-center">
+        <div className="w-full max-w-3xl">
+          <h2 className="text-2xl mb-4 font-semibold">Available Flights</h2>
+          <div className="grid grid-cols-1 gap-4">
+            {flights.map((flight) => (
+              <div
+                key={flight.id}
+                onClick={() => setSelectedFlight(flight)}
+                className={`p-6 bg-white rounded-lg shadow-md cursor-pointer hover:shadow-lg ${
+                  selectedFlight && selectedFlight.id === flight.id
+                    ? "border-2 border-blue-500"
+                    : ""
+                }`}
+              >
+                <h3 className="text-xl font-bold mb-2">
+                  Flight {flight.flight_number}
+                </h3>
+                <p>Departure: {new Date(flight.departure_time).toLocaleString()}</p>
+                <p>Destination: {flight.destination}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
 
-      {/* Display Seats of Selected Flight */}
+      {/* Seat Map for Selected Flight */}
       {selectedFlight && (
-        <div className="mt-5">
-          <h2 className="text-2xl mb-3">Select a Seat</h2>
-          <ul className="bg-white shadow-md rounded-lg">
+        <div className="mt-10">
+          <h2 className="text-2xl font-semibold mb-4 text-center">Select a Seat</h2>
+          <div className="grid grid-cols-8 gap-2 justify-center">
             {selectedFlight.seats.map((seat) => (
-              <li
+              <div
                 key={seat.id}
                 onClick={() => {
                   if (seat.is_available && !seat.locked) {
-                    // Check if seat is locked or booked
                     setSelectedSeat(seat);
                   }
                 }}
-                className={`p-4 border-b cursor-pointer hover:bg-gray-200 
-        ${
-          seat.is_available && !seat.locked
-            ? "text-green-600"
-            : "text-red-600 line-through"
-        } 
-        ${
-          selectedSeat && selectedSeat.id === seat.id
-            ? "bg-blue-100 border border-blue-500"
-            : ""
-        }`}
+                className={`p-4 text-center border rounded-lg cursor-pointer hover:bg-gray-200 ${
+                  seat.is_available && !seat.locked
+                    ? "bg-green-100 text-green-600"
+                    : "bg-red-100 text-red-600"
+                } ${
+                  selectedSeat && selectedSeat.id === seat.id
+                    ? "bg-blue-200 border-blue-500"
+                    : ""
+                }`}
               >
-                Seat {seat.seat_number} -{" "}
+                {seat.seat_number} <br />
                 {seat.is_available
                   ? seat.locked
                     ? "Locked"
                     : "Available"
                   : "Booked"}
-              </li>
+              </div>
             ))}
-          </ul>
+          </div>
         </div>
       )}
 
       {/* Transaction Controls */}
-      <div className="mt-5 bg-white shadow-md rounded-lg p-5">
-        <h2 className="text-2xl mb-3">Transaction</h2>
-        <button
-          onClick={startTransaction}
-          className="bg-blue-500 text-white py-2 px-4 rounded hover:bg-blue-700"
-        >
-          Start Transaction
-        </button>
-        <>
-                  {transaction && JSON.stringify(transaction)}
-        </>
-        {transaction && (
-          <div className="mt-3">
-            <button
-              onClick={acquireLock}
-              className="bg-green-500 text-white py-2 px-4 rounded hover:bg-green-700 mr-2"
-            >
-              Acquire Lock on Selected Seat
-            </button>
-            <button
-              onClick={commitTransaction}
-              className="bg-yellow-500 text-white py-2 px-4 rounded hover:bg-yellow-700 mr-2"
-            >
-              Commit Transaction
-            </button>
-            <button
-              onClick={abortTransaction}
-              className="bg-red-500 text-white py-2 px-4 rounded hover:bg-red-700"
-            >
-              Abort Transaction
-            </button>
+      {selectedFlight && (
+        <div className="mt-10 text-center">
+          <h2 className="text-2xl font-semibold mb-4">Manage Your Booking</h2>
+          <div>
+            {!transaction ? (
+              <button
+                onClick={startTransaction}
+                className="bg-blue-500 text-white py-2 px-4 rounded hover:bg-blue-700"
+              >
+                Start Transaction
+              </button>
+            ) : (
+              <>
+                <div className="flex justify-center items-center gap-4 mb-5">
+                  <button
+                    onClick={acquireLock}
+                    className="bg-green-500 text-white py-2 px-4 rounded hover:bg-green-700"
+                  >
+                    Acquire Lock
+                  </button>
+                  <button
+                    onClick={commitTransaction}
+                    className="bg-yellow-500 text-white py-2 px-4 rounded hover:bg-yellow-700"
+                  >
+                    Commit
+                  </button>
+                  <button
+                    onClick={abortTransaction}
+                    className="bg-red-500 text-white py-2 px-4 rounded hover:bg-red-700"
+                  >
+                    Abort
+                  </button>
+                </div>
+                <p className="text-sm text-gray-600">
+                  Transaction ID: {transaction.transaction_id}
+                </p>
+              </>
+            )}
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 };
