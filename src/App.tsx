@@ -1,186 +1,326 @@
 import React, { useState, useEffect } from "react";
 import axios from "axios";
+import toast, { Toaster } from "react-hot-toast";
 
-const App = () => {
+const API_BASE_URL = "http://localhost:8000"; // Replace with your Django backend URL
+
+function App() {
+  const [token, setToken] = useState(localStorage.getItem("token"));
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
   const [flights, setFlights] = useState([]);
   const [selectedFlight, setSelectedFlight] = useState(null);
+  const [seats, setSeats] = useState([]);
   const [selectedSeat, setSelectedSeat] = useState(null);
-  const [lockType, setLockType] = useState("EXCLUSIVE");
-  const [transaction, setTransaction] = useState(null);
+  const [isSeatLocked, setIsSeatLocked] = useState(false);
+  const [blinkingSeatId, setBlinkingSeatId] = useState(null);
+
+  const [socket, setSocket] = useState<WebSocket | null>(null);
+
+  // Setup WebSocket when token is available
+  useEffect(() => {
+    if (token) {
+      const newSocket = new WebSocket("ws://localhost:8000/ws/locking/");
+      setSocket(newSocket);
+
+      newSocket.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        handleWebSocketMessage(data);
+      };
+
+      return () => {
+        newSocket.close();
+      };
+    }
+  }, [token]);
+
+  // Handle WebSocket messages
+  const handleWebSocketMessage = (data) => {
+    const updatedSeatInfo = data.seat_info;
+
+    if (!updatedSeatInfo || !updatedSeatInfo.id) {
+      console.error("Invalid seat information received:", updatedSeatInfo);
+      return;
+    }
+
+    // Update seat state based on the event type
+    if (data.event_type === "seat_locked") {
+      toast.success(`Seat ${updatedSeatInfo.seat_number} locked!`);
+    } else if (data.event_type === "seat_booked") {
+      toast.success(`Seat ${updatedSeatInfo.seat_number} booked!`);
+    } else if (data.event_type === "seat_selected") {
+      toast.success(`Seat ${updatedSeatInfo.seat_number} selected!`);
+
+      // Trigger the blinking effect for the selected seat
+      setBlinkingSeatId(updatedSeatInfo.id);
+
+      // Remove blinking effect after 1 second
+      setTimeout(() => {
+        setBlinkingSeatId(null);
+      }, 1000);
+    }
+
+    // Update the state of the seats to reflect changes for all users
+    setSeats((prevSeats) =>
+      prevSeats.map((seat) =>
+        seat.id === updatedSeatInfo.id
+          ? {
+              ...seat,
+              status: updatedSeatInfo.status, // Update the status ('selected', 'locked', 'booked')
+              is_locked: updatedSeatInfo.status === "locked", // Update is_locked status
+              is_booked: updatedSeatInfo.status === "booked", // Update is_booked status
+            }
+          : seat
+      )
+    );
+  };
 
   useEffect(() => {
-    fetchFlights();
-  }, []);
+    if (token) {
+      fetchFlights();
+    }
+  }, [token]);
+
+  const handleSignup = async () => {
+    try {
+      const response = await axios.post(`${API_BASE_URL}/users/register/`, {
+        username,
+        password,
+      });
+      toast.success("User registered successfully!");
+    } catch (error) {
+      toast.error(error.response?.data?.error || "Signup failed!");
+    }
+  };
+
+  const handleLogin = async () => {
+    try {
+      const response = await axios.post(`${API_BASE_URL}/users/login/`, {
+        username,
+        password,
+      });
+      const { token } = response.data;
+      localStorage.setItem("token", token);
+      setToken(token);
+      toast.success("Logged in successfully!");
+    } catch (error) {
+      toast.error(error.response?.data?.error || "Login failed!");
+    }
+  };
 
   const fetchFlights = async () => {
     try {
-      const response = await axios.get("http://localhost:8000/flights/");
-      setFlights(response.data);
+      const response = await axios.get(`${API_BASE_URL}/flight/flights/`, {
+        headers: { Authorization: `Token ${token}` },
+      });
+      setFlights(response.data.flights);
     } catch (error) {
-      console.error("Error fetching flights:", error);
+      toast.error("Failed to fetch flights!");
     }
   };
 
-  const startTransaction = async () => {
+  const fetchSeats = async (flightId) => {
     try {
-      const response = await axios.post("http://localhost:8000/transactions/");
-      setTransaction(response.data);
-    } catch (error) {
-      console.error("Error starting transaction:", error);
-    }
-  };
-
-  const acquireLock = async () => {
-    try {
-      const response = await axios.post(
-        `http://localhost:8000/transactions/${transaction.transaction_id}/acquire-lock/`,
+      const response = await axios.get(
+        `${API_BASE_URL}/flight/flights/${flightId}/seats/`,
         {
-          seat_id: selectedSeat.id,
-          lock_type: lockType,
+          headers: { Authorization: `Token ${token}` },
         }
       );
-      alert(response.data.message);
+
+      console.log(response.data);
+
+      setSelectedFlight(flightId);
+      setSeats(response.data.seats);
+      setSelectedSeat(null); // Reset selected seat on flight change
+      setIsSeatLocked(false); // Reset locked status on flight change
     } catch (error) {
-      console.error("Error acquiring lock:", error);
-      alert("Error acquiring lock");
+      toast.error("Failed to fetch seats!");
     }
   };
 
-  const commitTransaction = async () => {
+  const handleSeatSelect = (seat) => {
+    setSelectedSeat(seat);
+    setIsSeatLocked(false); // Reset lock state when selecting a new seat
+
+    // Notify others that a seat has been selected
+    socket?.send(
+      JSON.stringify({
+        event_type: "seat_selected",
+        seat_info: {
+          id: seat.id,
+          seat_number: seat.seat_number,
+          status: "selected",
+        },
+      })
+    );
+  };
+
+  const lockSeat = async () => {
     try {
-      const response = await axios.post(
-        `http://localhost:8000/transactions/${transaction.transaction_id}/commit/`
+      await axios.post(
+        `${API_BASE_URL}/locking/lock/${selectedSeat.id}/`,
+        {},
+        {
+          headers: { Authorization: `Token ${token}` },
+        }
       );
-      alert(response.data.message);
-      setTransaction(null);
-      setSelectedSeat(null);
+      setIsSeatLocked(true);
+      toast.success("Seat locked successfully!");
+
+      // Notify others that the seat is locked
+      socket?.send(
+        JSON.stringify({
+          event_type: "seat_locked",
+          seat_info: {
+            id: selectedSeat.id,
+            seat_number: selectedSeat.seat_number,
+            status: "locked",
+            is_locked: true, // Send updated is_locked status
+            is_booked: false, // Locked, but not booked yet
+          },
+        })
+      );
     } catch (error) {
-      console.error("Error committing transaction:", error);
+      toast.error(error.response?.data?.message || "Failed to lock seat!");
     }
   };
 
-  const abortTransaction = async () => {
+  const bookSeat = async () => {
     try {
-      const response = await axios.post(
-        `http://localhost:8000/transactions/${transaction.transaction_id}/abort/`
+      await axios.post(
+        `${API_BASE_URL}/booking/book/${selectedSeat.id}/`,
+        {},
+        {
+          headers: { Authorization: `Token ${token}` },
+        }
       );
-      alert(response.data.message);
-      setTransaction(null);
-      setSelectedSeat(null);
+      toast.success("Seat booked successfully!");
+
+      // Notify others that the seat is booked
+      socket?.send(
+        JSON.stringify({
+          event_type: "seat_booked",
+          seat_info: {
+            id: selectedSeat.id,
+            seat_number: selectedSeat.seat_number,
+            status: "booked",
+            is_locked: false, // Booked seat is no longer locked
+            is_booked: true, // Send updated is_booked status
+          },
+        })
+      );
     } catch (error) {
-      console.error("Error aborting transaction:", error);
+      toast.error(error.response?.data?.message || "Failed to book seat!");
     }
   };
 
   return (
-    <div className="min-h-screen bg-gray-100 p-10">
-      <h1 className="text-4xl font-bold text-center mb-10">Flight Booking System</h1>
-
-      {/* Flight Selection */}
-      <div className="flex justify-center">
-        <div className="w-full max-w-3xl">
-          <h2 className="text-2xl mb-4 font-semibold">Available Flights</h2>
-          <div className="grid grid-cols-1 gap-4">
+    <div className="min-h-screen bg-gray-100 flex items-center justify-center p-4">
+      <Toaster />
+      {!token ? (
+        <div className="w-full max-w-sm bg-white p-8 rounded shadow">
+          <h2 className="text-2xl font-bold mb-4">Sign In / Sign Up</h2>
+          <input
+            className="w-full p-2 mb-4 border border-gray-300 rounded"
+            type="text"
+            placeholder="Username"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+          />
+          <input
+            className="w-full p-2 mb-4 border border-gray-300 rounded"
+            type="password"
+            placeholder="Password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
+          <div className="flex justify-between">
+            <button
+              className="bg-blue-500 text-white p-2 rounded hover:bg-blue-600"
+              onClick={handleSignup}
+            >
+              Sign Up
+            </button>
+            <button
+              className="bg-green-500 text-white p-2 rounded hover:bg-green-600"
+              onClick={handleLogin}
+            >
+              Sign In
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="w-full max-w-4xl bg-white p-8 rounded shadow">
+          <h2 className="text-2xl font-bold mb-4">Available Flights</h2>
+          <ul className="mb-8">
             {flights.map((flight) => (
-              <div
+              <li
                 key={flight.id}
-                onClick={() => setSelectedFlight(flight)}
-                className={`p-6 bg-white rounded-lg shadow-md cursor-pointer hover:shadow-lg ${
-                  selectedFlight && selectedFlight.id === flight.id
-                    ? "border-2 border-blue-500"
-                    : ""
-                }`}
+                className="p-4 mb-2 bg-gray-100 rounded hover:bg-gray-200 cursor-pointer"
+                onClick={() => fetchSeats(flight.id)}
               >
-                <h3 className="text-xl font-bold mb-2">
-                  Flight {flight.flight_number}
-                </h3>
-                <p>Departure: {new Date(flight.departure_time).toLocaleString()}</p>
-                <p>Destination: {flight.destination}</p>
-              </div>
+                {flight.flight_number} from {flight.departure_city} to{" "}
+                {flight.arrival_city}
+              </li>
             ))}
-          </div>
-        </div>
-      </div>
+          </ul>
 
-      {/* Seat Map for Selected Flight */}
-      {selectedFlight && (
-        <div className="mt-10">
-          <h2 className="text-2xl font-semibold mb-4 text-center">Select a Seat</h2>
-          <div className="grid grid-cols-8 gap-2 justify-center">
-            {selectedFlight.seats.map((seat) => (
-              <div
-                key={seat.id}
-                onClick={() => {
-                  if (seat.is_available && !seat.locked) {
-                    setSelectedSeat(seat);
-                  }
-                }}
-                className={`p-4 text-center border rounded-lg cursor-pointer hover:bg-gray-200 ${
-                  seat.is_available && !seat.locked
-                    ? "bg-green-100 text-green-600"
-                    : "bg-red-100 text-red-600"
-                } ${
-                  selectedSeat && selectedSeat.id === seat.id
-                    ? "bg-blue-200 border-blue-500"
-                    : ""
-                }`}
-              >
-                {seat.seat_number} <br />
-                {seat.is_available
-                  ? seat.locked
-                    ? "Locked"
-                    : "Available"
-                  : "Booked"}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+          {/* Show selected seat */}
+          {selectedSeat && (
+            <div className="mb-4 p-4 bg-blue-100 rounded">
+              Selected Seat: <strong>{selectedSeat.seat_number}</strong>
+            </div>
+          )}
 
-      {/* Transaction Controls */}
-      {selectedFlight && (
-        <div className="mt-10 text-center">
-          <h2 className="text-2xl font-semibold mb-4">Manage Your Booking</h2>
-          <div>
-            {!transaction ? (
-              <button
-                onClick={startTransaction}
-                className="bg-blue-500 text-white py-2 px-4 rounded hover:bg-blue-700"
-              >
-                Start Transaction
-              </button>
-            ) : (
-              <>
-                <div className="flex justify-center items-center gap-4 mb-5">
-                  <button
-                    onClick={acquireLock}
-                    className="bg-green-500 text-white py-2 px-4 rounded hover:bg-green-700"
+          {selectedFlight && (
+            <>
+              <h2 className="text-2xl font-bold mb-4">Available Seats</h2>
+              <ul>
+                {seats.map((seat) => (
+                  <li
+                    key={seat.id}
+                    className={`p-4 mb-2 rounded ${
+                      seat.is_booked ? "bg-red-500 text-white" : "bg-gray-100"
+                    } ${
+                      seat.is_locked ? "bg-yellow-500" : "hover:bg-gray-200 cursor-pointer"
+                    } ${blinkingSeatId === seat.id ? 'blink' : ''}`} // Apply blinking class
+                    onClick={() =>
+                      !seat.is_booked && !seat.is_locked && handleSeatSelect(seat)
+                    }
                   >
-                    Acquire Lock
-                  </button>
-                  <button
-                    onClick={commitTransaction}
-                    className="bg-yellow-500 text-white py-2 px-4 rounded hover:bg-yellow-700"
-                  >
-                    Commit
-                  </button>
-                  <button
-                    onClick={abortTransaction}
-                    className="bg-red-500 text-white py-2 px-4 rounded hover:bg-red-700"
-                  >
-                    Abort
-                  </button>
-                </div>
-                <p className="text-sm text-gray-600">
-                  Transaction ID: {transaction.transaction_id}
-                </p>
-              </>
-            )}
-          </div>
+                    Seat {seat.seat_number} {seat.is_booked && "(Booked)"}
+                    {seat.is_locked && !seat.is_booked && "(Locked)"}
+                  </li>
+                ))}
+              </ul>
+
+
+              {/* Show "Proceed to Book" if a seat is selected but not locked */}
+              {selectedSeat && !isSeatLocked && (
+                <button
+                  className="mt-4 bg-blue-500 text-white p-2 rounded hover:bg-blue-600"
+                  onClick={lockSeat}
+                >
+                  Proceed to Book
+                </button>
+              )}
+
+              {/* Show "Pay" button if the seat is locked */}
+              {isSeatLocked && (
+                <button
+                  className="mt-4 bg-green-500 text-white p-2 rounded hover:bg-green-600"
+                  onClick={bookSeat}
+                >
+                  Pay and Book
+                </button>
+              )}
+            </>
+          )}
         </div>
       )}
     </div>
   );
-};
+}
 
 export default App;
